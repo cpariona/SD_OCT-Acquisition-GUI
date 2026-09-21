@@ -33,6 +33,8 @@ cc1_trigger_width_us = 5.0
 camera_phase_offset_us = 0.0
 trigger_mode = "1:  Fixed Exp"
 trigger_polarity = "CC1 High"
+# Set camera_rearm_us only after measuring the minimum safe inter-buffer gap.
+# Its absence leaves planning available but prevents physical acquisition.
 
 [spectrometer]
 # Acquisition metadata used by the external MATLAB processing pipeline.
@@ -57,3 +59,5 @@ trigger_pulse_width_us = 10.0
 [runtime]
 writer_queue_blocks = 16
 park_ramp_points = 200
+# Allocation budget for the two float64 AO channels, not a device-memory claim.
+ao_buffer_bytes = 67108864
