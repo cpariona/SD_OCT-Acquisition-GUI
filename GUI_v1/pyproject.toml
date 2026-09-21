@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "octoce-acquisition"
+version = "0.1.0"
+description = "GUI and deterministic acquisition engine for a PCIe-6323 / PCIe-1433 OCT-OCE system"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "numpy>=1.24",
+  "Pillow>=10",
+]
+
+[project.optional-dependencies]
+hardware = ["nidaqmx>=1.0"]
+test = []
+
+[project.scripts]
+octoce-gui = "octoce.gui:main"
+octoce-inspect = "octoce.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["octoce*"]
