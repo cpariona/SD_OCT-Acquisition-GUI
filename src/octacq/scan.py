@@ -80,7 +80,8 @@ class Schedule:
         previous = np.array((self.hardware.park_x_mm, self.hardware.park_y_mm))
         if self.continuous:
             # A regenerated cycle must join its own last position smoothly.
-            previous = next(reversed(tuple(self.frames()))).xy_mm[-1]
+            for frame in self.frames():
+                previous = frame.xy_mm[-1]
         waveform = np.empty((capacity * self.period_ticks, 2), dtype=np.float64)
         frames = []
         scale = np.array((self.hardware.x_v_per_mm, self.hardware.y_v_per_mm))
