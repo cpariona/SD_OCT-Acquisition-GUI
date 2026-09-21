@@ -15,6 +15,7 @@ class Daq:
         self.continuous = False
         self.position = np.asarray(profile.park_volts, dtype=float)
         self.energized = False
+        self._started_tasks = []
 
     def prepare(self, schedule: Schedule, block: Block):
         import nidaqmx
@@ -22,6 +23,8 @@ class Daq:
         from nidaqmx.stream_writers import AnalogMultiChannelWriter
         if self.tasks:
             raise RuntimeError("DAQ tasks are already prepared")
+        if self.position is None:
+            raise RuntimeError("AO position is unknown; restore park physically and restart the instrument session")
         h, p = self.profile, schedule.request
         self.waveform = block.volts
         self.continuous = schedule.continuous
@@ -75,10 +78,12 @@ class Daq:
 
     def start(self):
         for task in self.tasks[1:]:
+            self._started_tasks.append(task)
             task.start()
         # Mark uncertain start conservatively; cleanup must inspect generated samples.
         self.started = True
         self.energized = True
+        self._started_tasks.append(self.ao)
         self.ao.start()
 
     def wait(self, stop_event, duration_s):
@@ -93,6 +98,8 @@ class Daq:
         errors = []
         # Freeze AO first so the generated-sample count describes its held output.
         for task in self.tasks:
+            if task not in self._started_tasks:
+                continue
             try:
                 task.stop()
             except Exception as error:
@@ -113,6 +120,7 @@ class Daq:
             except Exception as error:
                 errors.append(error)
         self.tasks = []
+        self._started_tasks = []
         self.ao = None
         self.started = False
         if errors:

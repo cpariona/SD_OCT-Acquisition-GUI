@@ -50,6 +50,8 @@ class ScanRequest:
                 lengths = (lengths[self.orientation == "vertical"],)
             if min(lengths) <= 0:
                 raise ValueError("Active scan dimensions must be positive")
+        if self.frame_lines > 0xFFFFFFFF or self.expected_alines > 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("Request exceeds NI ROI or raw-format count capacity")
 
     @property
     def is_stationary(self):
@@ -85,6 +87,9 @@ class ScanRequest:
 
 @dataclass(frozen=True)
 class HardwareProfile:
+    camera_model: str
+    frame_grabber_model: str
+    galvo_model: str
     daq_device: str
     ao_x: str
     ao_y: str
@@ -150,6 +155,8 @@ class HardwareProfile:
             raise ValueError("Invalid external trigger line")
         if self.camera_rearm_us is not None and self.camera_rearm_us < 0:
             raise ValueError("Camera rearm cannot be negative")
+        if min(self.wavelength_start_nm, self.wavelength_end_nm) <= 0 or self.wavelength_start_nm == self.wavelength_end_nm:
+            raise ValueError("Spectrometer endpoints must be positive and distinct")
         self.check_volts(self.park_volts)
 
     @property
@@ -205,6 +212,7 @@ def load_config(path: str | Path) -> tuple[HardwareProfile, RuntimePolicy]:
     values = {key: value for section in (daq, camera, data["galvo"], data["spectrometer"])
               for key, value in section.items() if key not in ("model", "device")}
     values.update(daq_device=daq["device"], camera_interface=grabber["interface"],
+                  camera_model=camera["model"], frame_grabber_model=grabber["model"], galvo_model=data["galvo"]["model"],
                   external_trigger_line=grabber["external_trigger_line"],
                   oce_pulse_width_us=data["oce"]["trigger_pulse_width_us"])
     return HardwareProfile(**values), RuntimePolicy(

@@ -1,5 +1,6 @@
 """Direct NI-IMAQ camera session and numbered raw ring extraction."""
 import ctypes
+from math import ceil
 from ctypes import POINTER, byref, c_char_p, c_double, c_int32, c_uint32, c_void_p
 import numpy as np
 from ..config import HardwareProfile, RuntimePolicy
@@ -40,8 +41,7 @@ class Camera:
             self._check(self._dll.imgInterfaceOpen(h.camera_interface.encode("ascii"), byref(self.interface_id)), "interface open")
             self._check(self._dll.imgSessionOpen(self.interface_id, byref(self.session_id)), "session open")
             self._check(self._dll.imgSessionConfigureROI(self.session_id, 0, 0, height, h.spectral_samples), "ROI")
-            timeout = c_uint32(r.frame_timeout_ms)
-            self._check(self._dll.imgSetAttributeFromVoidPtr(self.session_id, IMG_ATTR_FRAMEWAIT_MSEC, byref(timeout)), "timeout")
+            self.set_read_timeout(r.frame_timeout_ms + ceil(height * h.cc1_period_us / 1000))
             # The installed ICD resets the sensor on polarity change: apply this first.
             self._set_string("Serial Commands", "ON")
             self._set_string("Trigger Polarity", h.trigger_polarity)
@@ -60,7 +60,7 @@ class Camera:
                     raise RuntimeError(f"Camera did not confirm {name}")
             # External active-high Trigger Each Buffer (protocol values 0, 0, 3).
             self._check(self._dll.imgSessionTriggerConfigure2(self.session_id, 0, h.external_trigger_line,
-                        0, r.frame_timeout_ms, 3), "external buffer trigger")
+                        0, 0xFFFFFFFF, 3), "external buffer trigger")
             self.row_pixels = self._get_u32(IMG_ATTR_ROWPIXELS)
             if (self._get_u32(IMG_ATTR_ROI_WIDTH) != h.spectral_samples or
                 self._get_u32(IMG_ATTR_ROI_HEIGHT) != height or
@@ -85,6 +85,13 @@ class Camera:
     def _set_string(self, name, value):
         self._check(self._dll.imgSetCameraAttributeString(self.session_id, name.encode(), value.encode()), name)
 
+    def set_read_timeout(self, milliseconds: int):
+        if not 1 <= milliseconds < 0xFFFFFFFF:
+            raise ValueError("Frame wait exceeds the NI-IMAQ timeout range")
+        timeout = c_uint32(milliseconds)
+        self._check(self._dll.imgSetAttributeFromVoidPtr(self.session_id, IMG_ATTR_FRAMEWAIT_MSEC,
+                                                       byref(timeout)), "frame timeout")
+
     def _get_u32(self, attribute):
         value = c_uint32()
         self._check(self._dll.imgGetAttribute(self.session_id, attribute, byref(value)), "attribute read")
@@ -99,6 +106,8 @@ class Camera:
     def read(self):
         if not self.session_id.value:
             raise RuntimeError("Camera is disconnected")
+        if self.next_buffer >= 0xFFFFFFFE:
+            raise RuntimeError("Camera buffer numbering exhausted; reconnect before another acquisition")
         actual, address = c_uint32(), c_void_p()
         self._check(self._dll.imgSessionExamineBuffer2(self.session_id, self.next_buffer,
                                                      byref(actual), byref(address)), "examine buffer")
@@ -140,6 +149,7 @@ class Camera:
         self.height = 0
         if errors:
             raise ExceptionGroup("Camera cleanup failed", errors)
+
     def _bind(self) -> None:
         dll = self._dll
         dll.imgInterfaceOpen.argtypes = [c_char_p, POINTER(c_uint32)]

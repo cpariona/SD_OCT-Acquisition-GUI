@@ -9,7 +9,8 @@ import numpy as np
 from octacq.config import load_config, ScanRequest
 from octacq.scan import plan
 from octacq.hardware.daq import Daq
-from octacq.hardware.camera import Camera, IMG_ATTR_LOST_FRAMES
+from octacq.hardware.camera import (Camera, IMG_ATTR_LOST_FRAMES, IMG_ATTR_ROWPIXELS,
+    IMG_ATTR_ROI_WIDTH, IMG_ATTR_ROI_HEIGHT, IMG_ATTR_BITSPERPIXEL, IMG_ATTR_BYTESPERPIXEL)
 from octacq.hardware.system import HardwareSystem
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +104,63 @@ class HardwareTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "lost"):
             camera.read()
         self.assertEqual(camera.lost_buffers, 1)
+
+    def test_camera_configuration_reuses_session_and_rebuilds_changed_roi(self):
+        camera = Camera(self.h, self.r)
+        dll = MagicMock()
+        camera._dll = dll
+        height = [0]
+        settings = {}
+        calls = []
+        def interface(name, result):
+            result._obj.value = 11
+            return 0
+        def session(interface_id, result):
+            result._obj.value = 12
+            return 0
+        def roi(sid, top, left, rows, width):
+            height[0] = rows
+            return 0
+        def attribute(sid, key, result):
+            result._obj.value = {IMG_ATTR_ROWPIXELS: self.h.spectral_samples,
+                IMG_ATTR_ROI_WIDTH: self.h.spectral_samples, IMG_ATTR_ROI_HEIGHT: height[0],
+                IMG_ATTR_BITSPERPIXEL: self.h.bit_depth, IMG_ATTR_BYTESPERPIXEL: 2,
+                IMG_ATTR_LOST_FRAMES: 0}[key]
+            return 0
+        def set_string(sid, name, value):
+            settings[name] = value
+            calls.append(name)
+            return 0
+        def get_string(sid, name, result, length):
+            result.value = settings[name]
+            return 0
+        def set_numeric(sid, name, value):
+            settings[name] = value.value
+            return 0
+        def get_numeric(sid, name, result):
+            result._obj.value = settings[name]
+            return 0
+        for name, effect in dict(imgInterfaceOpen=interface, imgSessionOpen=session,
+                imgSessionConfigureROI=roi, imgGetAttribute=attribute,
+                imgSetCameraAttributeString=set_string, imgGetCameraAttributeString=get_string,
+                imgSetCameraAttributeNumeric=set_numeric, imgGetCameraAttributeNumeric=get_numeric).items():
+            getattr(dll, name).side_effect = effect
+        for name in ("imgSetAttributeFromVoidPtr", "imgSessionTriggerConfigure2", "imgRingSetup",
+                     "imgSessionStopAcquisition", "imgClose"):
+            getattr(dll, name).return_value = 0
+            getattr(dll, name).__name__ = name
+        camera.connect(4)
+        camera.next_buffer = 7
+        camera.connect(4)
+        self.assertEqual(camera.next_buffer, 7)
+        self.assertEqual(dll.imgInterfaceOpen.call_count, 1)
+        self.assertLess(calls.index(b"Trigger Polarity"), calls.index(b"Trigger Mode"))
+        self.assertEqual(dll.imgSessionTriggerConfigure2.call_args.args[-2:], (0xFFFFFFFF, 3))
+        camera.connect(8)
+        self.assertEqual(dll.imgInterfaceOpen.call_count, 2)
+        self.assertEqual(camera.next_buffer, 0)
+        camera.close()
+        self.assertEqual(camera.session_id.value, 0)
 
     def test_session_reuse_and_error_cleanup(self):
         system = HardwareSystem(self.h, self.r)

@@ -113,6 +113,7 @@ class Acquisition:
                 self._stop.set()
 
         try:
+            self.hardware.statistics = {}
             schedule = plan(request, self.profile, continuous=continuous)
             # Validate every block before enabling hardware, without retaining them all.
             block_count = 0

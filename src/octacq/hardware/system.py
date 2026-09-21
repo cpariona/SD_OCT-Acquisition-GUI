@@ -1,5 +1,6 @@
 """Camera/DAQ session coordination for this laboratory instrument."""
 import time
+from math import ceil
 from ..config import HardwareProfile, RuntimePolicy
 from ..scan import Schedule
 from .camera import Camera
@@ -30,8 +31,10 @@ class HardwareSystem:
         if self.profile.camera_rearm_us is None:
             raise ValueError("Measure and set camera.camera_rearm_us in system.toml before physical acquisition")
         self.connect(schedule.request.frame_lines)
+        self.camera.set_read_timeout(self.policy.frame_timeout_ms + ceil(schedule.period_s * 1000))
         self.active = True
-        self.statistics = dict(block_count=0, block_gap_max_s=0.0, block_gap_total_s=0.0,
+        self.statistics = dict(block_count=0, block_setup_max_s=0.0, block_setup_total_s=0.0,
+                               first_buffer=None, last_buffer=None,
                                lost_camera_buffers=0, discontinuous_camera_buffers=0)
         failed = True
         previous_end = None
@@ -49,13 +52,16 @@ class HardwareSystem:
                 self.statistics["block_count"] += 1
                 if previous_end is not None:
                     gap = started - previous_end
-                    self.statistics["block_gap_max_s"] = max(self.statistics["block_gap_max_s"], gap)
-                    self.statistics["block_gap_total_s"] += gap
+                    self.statistics["block_setup_max_s"] = max(self.statistics["block_setup_max_s"], gap)
+                    self.statistics["block_setup_total_s"] += gap
                 while True:
                     for frame in block.frames:
                         if stop_event.is_set():
                             raise InterruptedError("Acquisition stopped")
                         number, raw = self.camera.read()
+                        if self.statistics["first_buffer"] is None:
+                            self.statistics["first_buffer"] = number
+                        self.statistics["last_buffer"] = number
                         yield frame, number, raw
                     if not schedule.continuous:
                         break
