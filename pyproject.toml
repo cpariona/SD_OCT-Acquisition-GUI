@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sd-oct-acquisition"
+version = "0.1.0"
+description = "Hardware-timed SD-OCT/OCE acquisition application"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "numpy>=2.4,<3",
+]
+
+[project.optional-dependencies]
+hardware = [
+  "nidaqmx>=1.6,<2",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["octacq*"]

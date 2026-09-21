@@ -1,0 +1,59 @@
+# Canonical laboratory configuration.
+# This file is the single source of truth for physical hardware, routing,
+# calibration, and runtime defaults used by the Python acquisition application.
+
+[system]
+name = "SD-OCT/OCE"
+platform = "Windows"
+
+[daq]
+device = "Dev1"
+ao_x = "ao0"
+ao_y = "ao1"
+camera_counter = "ctr0"
+oce_counter = "ctr1"
+camera_trigger_terminal = "/Dev1/PFI12"
+oce_trigger_terminal = "/Dev1/PFI13"
+ao_min_v = -10.0
+ao_max_v = 10.0
+
+[frame_grabber]
+model = "NI PCIe-1433"
+interface = "img0"
+external_trigger_line = 0
+ring_buffers = 16
+frame_timeout_ms = 2000
+
+[camera]
+model = "Sensors Unlimited GL2048R-10A"
+spectral_samples = 2048
+bit_depth = 12
+requested_line_rate_hz = 50000.0
+cc1_trigger_width_us = 5.0
+camera_phase_offset_us = 0.0
+trigger_mode = "1:  Fixed Exp"
+trigger_polarity = "CC1 High"
+
+[spectrometer]
+# Acquisition metadata used by the external MATLAB processing pipeline.
+wavelength_start_nm = 1472.76
+wavelength_end_nm = 1261.36
+
+[galvo]
+model = "Thorlabs GVS002"
+x_v_per_mm = 0.40528098
+y_v_per_mm = 0.40710430
+max_abs_v = 9.5
+park_x_mm = 0.0
+park_y_mm = 0.0
+
+# Current laboratory setting inherited from the hardware configuration.
+# Confirm the physical JP7 position before changing this value.
+v_per_degree = 0.8
+
+[oce]
+trigger_pulse_width_us = 10.0
+
+[runtime]
+writer_queue_blocks = 16
+park_ramp_points = 200
