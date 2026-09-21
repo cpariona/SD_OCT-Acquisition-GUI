@@ -59,3 +59,52 @@ No compatibility checker, environment wrapper, or startup verifier is part of th
 ## Development rules
 
 Read `AGENTS.md` before implementing or modifying the canonical package. The architecture and hardware timing contracts are defined in `docs/architecture.md` and `docs/hardware.md`.
+
+## Running the application
+
+From the repository root in Git Bash:
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate
+python -m pip install -e .
+python -m octacq.ui.app --config config/system.toml
+```
+
+Opening the GUI does not open NI devices. Install `python -m pip install -e '.[hardware]'`
+on the instrument computer, with the installed NI-DAQmx and 64-bit NI Vision
+Acquisition drivers, before connecting. Read `docs/hardware.md` before the first
+physical run. In particular, camera rearm time must be measured and entered in
+`system.toml`; its absence permits offline planning but prevents acquisition.
+
+Choose BM/MB, geometry, dimensions, counts and a destination `.bin`, then connect
+and acquire. Existing output files are never overwritten. Stop finalizes the
+confirmed prefix as incomplete. A stopped or failed exposure requires reconnect;
+completed acquisitions reuse the connected camera session. Changing frame height
+rebuilds the camera ring and session.
+
+Stationary alignment repeats MB groups at the selected center. Continuous
+crosshair repeats X/Y without OCE. Both run without a file and report acquisition
+status/counts. There are no reconstructed preview, phase, depth or USB panels.
+The GUI can be opened and its inputs edited without NI; there is no production
+simulation mode. Controlled raw sources live only in the tests.
+
+## Offline checks and raw inspection
+
+```bash
+python -m unittest discover -s tests -v
+python -c "from octacq.storage import read_info; print(read_info('measurement.bin'))"
+```
+
+The canonical tests never open NI hardware. They exercise request/profile
+validation, geometry and ordering, schedule/hold timing, binary integrity,
+numbered ring copies, driver sequencing with substitutes, acquisition cleanup,
+and one hidden Tk smoke test. Python must include Tk for that smoke test.
+
+`read_raw(path, logical=True)` returns the full logical array only for complete
+files; the default exposes confirmed A-lines of incomplete files as well.
+The binary envelope remains compatible with the readers in both reference
+folders. Reconstruction remains in the external MATLAB project.
+
+Physical diagnostics are explicit scripts under `tools/diagnostics/`; their
+scope and prerequisites are documented in `docs/hardware.md`.

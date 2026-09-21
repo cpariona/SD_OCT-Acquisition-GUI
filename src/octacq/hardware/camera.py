@@ -196,5 +196,3 @@ class Camera:
         dll.imgGetCameraAttributeNumeric.restype = c_int32
         dll.imgShowError.argtypes = [c_int32, c_char_p]
         dll.imgShowError.restype = c_int32
-
-

@@ -139,3 +139,79 @@ Do not duplicate cleanup logic across GUI callbacks and hardware modules.
 ## Migration principle
 
 Port behavior, not file structure. For each subsystem, compare both legacy implementations first, retain the behavior that is physically justified, and implement it once in the canonical module.
+
+## Implemented scan and persistence contracts
+
+`config.load_config(path)` returns a `HardwareProfile` and a `RuntimePolicy`.
+`ScanRequest` contains experiment values only. `scan.plan(request, profile)` is
+pure and returns a schedule whose frames carry logical indices and whose blocks
+carry AO waveforms. No widget state or driver object enters the planner.
+
+BM visits B, M, then the active spatial line. MB visits B, spatial position, then
+M samples at that fixed position. Crosshair inserts X/Y sweeps after M in BM and
+before spatial position in MB. Meridian diameters span a half-turn. Raster Y is
+centered when B=1. Linear orientation selects the moving axis. Zero lengths on
+both axes mean stationary acquisition; the explicit stationary pattern requires
+both lengths to be zero.
+
+Linear bidirectionality is explicit (enabled by default, preserving the previous
+linear behavior). It alternates each BM repetition and each MB B-scan. Raster
+bidirectionality alternates B-scans. Storage reverses only backward BM frames to
+spatial-forward order. MB position groups remain in acquisition order and their
+M time axis is never reversed. Crosshair BM has one OCE event on X per X/Y pair;
+MB has one OCE event per M group on either sweep.
+
+Every frame has the same scheduled period for a request: transition samples,
+active samples, then any necessary endpoint hold. The quintic transition excludes
+its endpoints. Position jumps with zero sync are rejected. Timing holds cover
+camera phase, the configured physical rearm requirement, and a delayed OCE pulse.
+PFI13 HIGH remains the configured fixed width. There is no percentage margin.
+
+The AO allocation budget in `RuntimePolicy` bounds each two-channel float64
+waveform. Frame descriptors/raw queues use additional host memory. Blocks preserve
+complete crosshair X/Y pairs and acquisition ordering. Each block is configured
+once, counters arm first, then AO starts. Block setup can introduce a gap when the
+budget forces multiple blocks; this implementation does not claim gapless streaming
+across blocks. Metadata records planned/actual block counts and host setup durations.
+These host measurements are not physical edge-to-edge gap measurements.
+
+Continuous stationary MB and crosshair use regenerated AO cycles and continuous
+counter trains, with no Python rearm between cycles. The cyclic transition joins
+the preceding cycle's endpoint. A preparatory ramp reaches that endpoint before
+arming the cycle. Continuous acquisition has no finite output file.
+
+`Acquisition` owns one instrument worker and one bounded raw writer. GUI events
+are coarse state/progress messages; Tk widgets are touched only on the Tk thread.
+A full writer queue is an integrity error, never permission to drop frames. Stop
+or error closes the hardware iterator, attempts all cleanup actions, drains valid
+queued data, and finalizes the file. Cleanup errors remain visible. Confirmed
+progress counts written A-lines, not merely received buffers.
+
+## Binary contract
+
+The format remains `OCTOCE1` major/minor 1.0: the 64-byte little-endian prefix uses
+`<8sHHIHHIIQQQII4x`, followed by CRC32-protected UTF-8 JSON in a reserved 65536-byte
+header. Payload is C-order little-endian uint16, without transitions or holds.
+The prefix contains flags, JSON length/CRC, payload offset, expected/confirmed
+A-lines and pixels per A-line. The complete and little-endian flags retain bits
+0 and 1. Each append updates the confirmed prefix after writing all bytes.
+
+JSON records the request, physical-profile snapshot, runtime resources, effective
+CC1 timing, trigger timing, data direction policy, shape/order, and final integrity
+and execution information. Wavelength endpoints remain metadata only; established
+`k_start_nm`/`k_end_nm` metadata keys are retained for external readers.
+
+An interrupted process leaves the last confirmed prefix readable even if the JSON
+counts are stale. Readers use the minimum of expected, prefix-confirmed, and fully
+present A-lines. Normal finalization flushes payload before publishing complete
+status. This is recovery from interrupted acquisition, not a guarantee of atomic
+header replacement or survival of power loss during a header write. Files with a
+bad metadata CRC are rejected rather than guessed.
+
+## Simulation decision
+
+The reference simulator synthesizes fringes for reconstructed previews and inserts
+software waits. It demonstrates GUI/processing behavior, not NI timing or integrity.
+It is not part of the canonical application. Small controlled sources and driver
+substitutes in tests supply known raw markers and failures without a backend/plugin
+framework. Offline GUI startup and scan planning remain available.

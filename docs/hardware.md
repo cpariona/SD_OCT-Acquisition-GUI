@@ -1,134 +1,154 @@
-# Hardware and synchronization audit
+# Hardware and synchronization
 
-This document records the current understanding of the physical acquisition chain and defines the synchronization contract for the canonical implementation. Numeric laboratory settings live in `config/system.toml` and are not duplicated here.
+## Instrument and routing
 
-## Hardware chain
-
-| Component | Role in acquisition |
-| --- | --- |
-| NI PCIe-6323 | Generates X/Y galvo AO and hardware-timed camera/OCE trigger signals. |
-| NI PCIe-1433 | Camera Link frame grabber. NI-IMAQ receives externally triggered acquisition buffers. |
-| Sensors Unlimited GL2048R-10A | 2048-pixel, 12-bit line-scan OCT camera. |
-| Thorlabs GVS002 | Galvanometer system driven by PCIe-6323 AO. |
-| OCE excitation system | Receives the PFI13 trigger; the exact downstream actuator is outside this repository. |
-
-The optional USB camera present in the legacy code is not part of the canonical system.
-
-## Physical routing
-
-The authoritative device names and terminals are defined in `config/system.toml`.
-
-Conceptually:
+`config/system.toml` is authoritative for device identity, electrical limits,
+calibration, routing and hardware timing. The instrument comprises the PCIe-6323,
+PCIe-1433, GL2048R line-scan camera, GVS002 galvos and an external OCE excitator.
 
 ```text
-PCIe-6323 AO0 ─────────────► Galvo X
-PCIe-6323 AO1 ─────────────► Galvo Y
-
-PCIe-6323 ctr0 ── PFI12 ───► PCIe-1433 external buffer trigger
-PCIe-1433 / camera timing ──► GL2048R CC1 line acquisition
-
-PCIe-6323 ctr1 ── PFI13 ───► OCE excitation trigger
+PCIe-6323 AO X/Y -> galvo X/Y
+PCIe-6323 camera counter -> PFI12 -> PCIe-1433 external buffer trigger
+PCIe-1433 pattern generator -> CC1 -> GL2048R line exposures
+PCIe-6323 OCE counter -> PFI13 -> external OCE system
 ```
 
-## What each timing variable means
+PFI12 triggers a whole acquisition buffer, not one A-line. The frame grabber
+produces CC1 timing for all active lines of that buffer. Sync and hold samples are
+AO-only. The external trigger uses `IMG_TRIG_ACTION_BUFFER`, active-high polarity,
+and the configured external input. Confirm the actual cable mapping in NI MAX.
 
-### Requested line rate
+The camera ICD attributes used by the existing setup are Serial Commands,
+Trigger Polarity, Operational Setting, Trigger Mode, CC1 Trigger Width and CC1
+Trigger Period. Polarity is applied before the other serial settings because the
+installed ICD resets the sensor when it changes. The code reads back trigger mode,
+polarity, CC1 period/width, ROI, row stride and pixel format before any scan.
+The observed ICD period increment and OPR ranges are encoded as device rules;
+the requested laboratory rate and width come from TOML. The effective quantized
+rate is recorded in acquisition metadata and must match the DAQ rate readback.
 
-A camera/hardware property used to derive the line period. The legacy camera configuration quantizes the CC1 period to the increment exposed by the installed ICD, so the effective line rate may differ slightly from the requested value. The actual/effective rate used for an acquisition must be recorded in metadata.
+## Timing contract
 
-### Camera trigger width
+The AO start trigger is the common reference. Camera configuration precedes AO
+preload. Both counter tasks are committed and armed before AO starts. One camera
+pulse occurs per frame, and PFI13 occurs once per scheduled OCE event. Its HIGH
+width is fixed by the profile and never scaled with the event period. Counter
+width/period/delay readbacks are checked before enabling the schedule.
 
-Width of the camera-side CC1 trigger configuration. It is a hardware timing value, not a scan parameter.
+`BFramesDelay` is provisionally a temporal offset in microseconds from the PFI12
+associated with an OCE event. Negative values are allowed only when the resulting
+PFI13 event does not precede AO start. Its exact physical relationship remains
+pending oscilloscope validation. There is no alternate interpretation in code.
 
-### Camera phase offset
+The planner reserves only explicit physical timing: sync transition, active lines,
+camera phase, camera rearm, and a tail hold if a delayed OCE pulse extends beyond
+capture. It does not use the reference application's fixed percentage hold or
+change the camera rate to hit a nominal alignment frequency.
 
-Relative offset used when scheduling the PFI12 camera event against the AO timing reference. It belongs to the hardware synchronization profile.
+`camera.camera_rearm_us` is intentionally absent until measured. Add that key to
+`system.toml` after determining the required gap between the end of a frame and
+the next trigger. Zero is valid only if physically demonstrated. Planning works
+without it; physical acquisition requires it. Sync may already supply the needed
+inter-frame interval; the planner adds only the remaining hold. A positive camera
+phase remains within one active A-line tick so no transition is captured.
 
-### Sync points
+Continuous stationary alignment retains the configured camera rate and derives
+its trigger cadence from the schedule. Continuous crosshair uses one regenerated
+X/Y cycle without OCE. Neither recreates tasks at cycle boundaries. Finite scans
+use one preload per AO allocation block. Block boundaries may have setup gaps;
+measure those gaps electrically if an experiment requires multiple blocks. The
+recorded host setup duration is not an electrical timing measurement.
 
-Unacquired AO samples used to move smoothly from the previous galvo position to the next active trajectory. They are part of an acquisition request because they change the timing/transition policy of that run, but they are not stored as OCT samples.
+## Camera session and integrity
 
-### BFramesDelay
+Connect opens/configures one NI-IMAQ session and ring. Successful acquisitions
+leave that session available with cumulative buffer numbers. There is no idle
+expiry. Changing frame height rebuilds the ring through a new session; an aborted
+or failed exposure invalidates the session and requires reconnect. Disconnect
+closes the frame grabber explicitly.
 
-Legacy name for the relative OCE timing offset between the camera event and PFI13. It is acquisition-specific, not a hardware-profile constant. Before the canonical UI is finalized, confirm experimentally that the unit and physical meaning are truly microseconds and not external frame counts.
+The external trigger wait is infinite to accommodate intentional idle periods.
+The synchronous frame-extraction wait remains finite, using the scheduled frame
+period plus the configured timeout allowance. A stop while extraction is blocked
+may therefore wait until a buffer arrives or that timeout expires. This GUI stop
+is not an independent emergency stop.
 
-### NI-IMAQ ring buffers
+Each buffer is requested by cumulative number, checked for exact equality,
+copied using the reported row stride, and released even on a validation error.
+Changes in lost-frame counts also stop acquisition. A full writer queue stops
+acquisition rather than dropping spectra. All valid written rows remain readable
+as an incomplete file. The session must reconnect before counter numbering reaches
+the NI-IMAQ reserved buffer-number values.
 
-Runtime buffering. This protects transport from short consumer latency but does not define scan geometry or scientific timing.
+NI documents the trigger action and indefinite trigger wait in
+[imgSessionTriggerConfigure2](https://www.ni.com/docs/en-US/bundle/ni-imaq-c-api-ref/page/niimaqfunctionreference/imgsessiontriggerconfigure2.html),
+and extraction/release behavior in
+[Ring Acquisitions](https://www.ni.com/en/support/documentation/supplemental/06/ring-acquisitions.html).
 
-### Writer queue size
+## Galvo positioning and cleanup
 
-Runtime/disk decoupling only. It must not change hardware event timing.
+Before the first scan, verify that the instrument is at the configured park
+position. The initial software position assumes that physical condition. No task
+is created merely to park after a camera preflight failure. The first controlled
+motion begins only during an explicit acquisition.
 
-### Wavelength endpoints
+The profile's voltage bounds and the conservative GVS002 beam envelope restrict
+planned positions, including center and park. The beam envelope uses the restrictive
+row already used for unknown beam diameter in the reference application. Verify
+JP7, beam clearance, axis signs, analog return wiring and dynamic limits on the
+real installation. A static voltage envelope is not a slew/settling certification.
 
-Spectrometer calibration metadata for the external MATLAB processing pipeline. They are not used to clock acquisition hardware in the canonical Python application.
+On stop/error, AO and counters stop and all tasks are closed. The held AO command
+is derived from the driver's generated-sample count, then a quintic park ramp is
+attempted. If that count or task shutdown is unreliable, automatic park is refused
+and the error remains visible. Restore the physical park condition and restart
+the application before reacquisition. The count-to-output relationship and output
+retention across task close must be validated on the installed DAQ driver.
 
-## Synchronization observed in the legacy implementations
+## Manual validation and diagnostics
 
-The strongest reusable behavior is:
+Normal unit tests never open NI hardware. Before any physical script, verify the
+wiring, clear the galvo path, establish park, close other owners of the devices,
+and isolate OCE from the specimen until its trigger is characterized.
 
-1. open/configure NI-IMAQ before starting motion/acquisition;
-2. prepare the AO waveform and camera/OCE counter schedules;
-3. arm counter tasks first;
-4. start AO last;
-5. use the AO start trigger as the common timing reference;
-6. request NI-IMAQ buffers by monotonically increasing buffer number;
-7. fail on discontinuity or newly reported lost frames;
-8. store only active OCT samples, not transition/hold samples.
+Two scripts require an explicit `--execute`:
 
-In the later legacy implementation, multiple logical sweeps are concatenated so AO and counters are not re-created for every sweep. That direction is correct. The canonical implementation should make this the normal execution model rather than expose a separate strategy.
+- `tools/diagnostics/oce_pulse.py`: does PFI13 retain the configured HIGH width at
+  a chosen event period? It creates no AO task and opens no camera. Specify the
+  test interval with `--period-ms`; inspect HIGH/LOW and edge count on a scope.
+- `tools/diagnostics/session_continuity.py`: do two finite acquisitions deliver
+  consecutive buffers while retaining the same camera session, including idle
+  time between runs? Default stationary geometry stays at the configured park;
+  `--pattern crosshair` exercises X/Y ordering. OCE requires `--oce`. The script
+  reports expected PFI12/PFI13 counts for comparison with the scope.
 
-## Source of avoidable delay
+Outstanding physical checks:
 
-The principal software-inserted delay in the earlier implementation is repeated setup/teardown around logical segments:
+1. Installed ICD attributes, External input mapping, polarity and first exposure
+   latency relative to AO/PFI12. No valid exposure may lie in a sync interval.
+2. Minimum camera rearm interval for the intended frame heights and rates.
+3. Fixed-width PFI13 and the provisional delay relation, including delayed events
+   whose pulse ends after active capture and crosshair X-only BM triggering.
+4. Clock coercion, pulse count and continuity for stationary and moving BM/MB,
+   bidirectional scans, and both continuous loops.
+5. Driver-generated-sample readback on abort, actual held AO voltage, park ramp,
+   JP7/beam envelope and settling over the intended spatial range.
+6. Disk/ring throughput and the maximum practical allocation size. If blocks are
+   needed, measure their actual inter-trigger gaps; software tests cannot prove
+   absence of physical dead time.
+7. Reuse after an idle interval, frame-height reconfiguration, stop, lost-buffer
+   error and disconnect. Confirm that no devices remain reserved after cleanup.
 
-```text
-configure task → arm → run one segment → wait → close/recreate → next segment
-```
+## Findings from the reference comparison
 
-NI-IMAQ setup also has a substantial fixed cost in the legacy measurements. The later implementation partially avoids it by temporarily retaining the camera session.
+Both applications use the same geometry, NI-IMAQ calls and raw binary envelope.
+The first implementation configures/arms/closes DAQ tasks for each segment. The
+second batches a bounded number of uniform sweeps and adds a timed camera cache,
+but keeps a segment fallback and software gaps between batches. Its arbitrary
+percentage rearm margin and period-dependent OCE HIGH are not canonical behavior.
+Its different galvo/spectral calibration defaults are superseded by `system.toml`.
 
-The canonical lifecycle should instead be:
-
-```text
-connect hardware
-    ↓
-keep NI-IMAQ session configured
-    ↓
-plan complete acquisition
-    ↓
-prepare/arm hardware schedule
-    ↓
-run hardware-timed acquisition
-    ↓
-return results while hardware session remains connected
-    ↓
-next acquisition or disconnect
-```
-
-The hardware session should normally live for the application's connected lifetime, not for an arbitrary idle timeout.
-
-## Scheduling contract for the canonical implementation
-
-- Python must not sleep between valid scan events to create timing.
-- AO/counters define event timing in hardware.
-- Physical transition or hold samples are allowed when they are required by galvo motion, camera/frame-grabber behavior, or OCE timing.
-- Such samples must be represented explicitly by the schedule and excluded from stored OCT payload unless they are actual requested measurements.
-- If a full acquisition cannot fit in one finite hardware buffer, divide it into internal blocks according to hardware/resource limits. Do not create a user-facing acquisition mode for this.
-- Do not preserve the legacy fixed-percentage rearm margin merely because it exists; retain only margins supported by hardware requirements or measurements.
-- Keep the camera session open while the instrument is connected so repeated acquisitions do not pay unnecessary NI-IMAQ setup cost.
-
-## Legacy behavior that must be audited before porting
-
-Codex should resolve these points from both implementations and, where code cannot answer them, mark them for a single physical test rather than create speculative compatibility logic:
-
-1. exact NI-IMAQ external-trigger action used for PFI12 and the resulting buffer/exposure latency;
-2. exact camera trigger polarity and trigger-to-exposure timing for the installed GL2048R ICD;
-3. physical meaning and unit of `BFramesDelay`;
-4. physical GVS002 JP7 setting and any galvo limits that depend on it;
-5. whether all moving MB cases can be scheduled without software rearm gaps by using a continuous AO/counter schedule;
-6. maximum practical AO/counter schedule size before internal block streaming is required;
-7. required OCE hold behavior when a delayed PFI13 event extends beyond the last active A-line.
-
-These are hardware facts, not reasons to add generic validators or alternate acquisition engines.
+The old GUI's claim that each PFI12 pulse is one valid line contradicts its buffer
+trigger configuration. Its 50 Hz alignment path also changes the camera line rate
+and OCE duty cycle. Neither behavior is used here. Old hardware scripts contain
+physical actions and are retained untouched as references, not collected as tests.
