@@ -22,6 +22,9 @@ class Instrument:
         self.delay = 0.005
         self.number_offset = 0
 
+    def preflight(self, schedule):
+        return None
+
     def execute(self, schedule, stop):
         try:
             number = self.number_offset
@@ -108,3 +111,13 @@ class AcquisitionTests(unittest.TestCase):
         self.engine.join(5)
         self.assertEqual(self.engine.state, "stopped")
         self.assertTrue(self.engine.hardware.cleaned)
+
+    def test_missing_rearm_fails_before_creating_output(self):
+        engine = Acquisition(self.h, self.r)
+        engine.hardware.connected = True
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "blocked.bin"
+            engine.start(self.p, path)
+            engine.join(5)
+            self.assertEqual(engine.state, "error")
+            self.assertFalse(path.exists())

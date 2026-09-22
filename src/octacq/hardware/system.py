@@ -23,13 +23,16 @@ class HardwareSystem:
         self.camera.connect(frame_lines)
         self.connected = True
 
-    def execute(self, schedule: Schedule, stop_event):
+    def preflight(self, schedule: Schedule):
         if self.active or not self.connected:
             raise RuntimeError("Instrument must be connected and idle")
         if schedule.hardware != self.profile:
             raise ValueError("Schedule belongs to a different hardware profile")
         if self.profile.camera_rearm_us is None:
             raise ValueError("Measure and set camera.camera_rearm_us in system.toml before physical acquisition")
+
+    def execute(self, schedule: Schedule, stop_event):
+        self.preflight(schedule)
         self.connect(schedule.request.frame_lines)
         self.camera.set_read_timeout(self.policy.frame_timeout_ms + ceil(schedule.period_s * 1000))
         self.active = True

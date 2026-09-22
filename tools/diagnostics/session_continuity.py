@@ -4,6 +4,7 @@ AO moves along the requested pattern; PFI12 is active and PFI13 is optional.
 Use an oscilloscope to check physical timing. Host durations are not gap measurements.
 """
 import argparse
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 import time
@@ -18,10 +19,16 @@ def main():
     parser.add_argument("--config", type=Path, default=Path("config/system.toml"))
     parser.add_argument("--pattern", choices=("stationary", "crosshair"), default="stationary")
     parser.add_argument("--oce", action="store_true")
+    parser.add_argument("--camera-rearm-us", type=float, required=True,
+                        help="Candidate inter-buffer rearm gap in microseconds")
     args = parser.parse_args()
     if not args.execute:
         parser.error("Physical hardware requires --execute")
     hardware, runtime = load_config(args.config)
+    if args.camera_rearm_us < 0:
+        parser.error("--camera-rearm-us must be >= 0")
+    hardware = replace(hardware, camera_rearm_us=args.camera_rearm_us)
+    print(f"Testing camera_rearm_us={hardware.camera_rearm_us:g} us; system.toml is unchanged")
     stationary = args.pattern == "stationary"
     request = ScanRequest(pattern=args.pattern, mode="MB" if stationary else "BM",
                           alines=4 if stationary else 100, bscans=2,

@@ -192,3 +192,14 @@ class HardwareTests(unittest.TestCase):
         system.daq.prepare.assert_not_called()
         system.daq.start.assert_not_called()
         system.daq.park.assert_not_called()
+
+    def test_missing_rearm_preflight_never_prepares_daq(self):
+        hardware = replace(self.h, camera_rearm_us=None)
+        system = HardwareSystem(hardware, self.r)
+        system.camera, system.daq = MagicMock(), MagicMock()
+        system.connected = True
+        schedule = plan(self.p, hardware)
+        with self.assertRaisesRegex(ValueError, "camera_rearm_us"):
+            system.preflight(schedule)
+        system.daq.prepare.assert_not_called()
+        system.daq.start.assert_not_called()

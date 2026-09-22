@@ -121,6 +121,7 @@ class Acquisition:
                 block_count += 1
                 if self._stop.is_set():
                     raise InterruptedError("Acquisition stopped")
+            self.hardware.preflight(schedule)
             if output is not None:
                 required = HEADER_CAPACITY + request.expected_alines * self.profile.spectral_samples * 2
                 if shutil.disk_usage(output.parent).free < required:

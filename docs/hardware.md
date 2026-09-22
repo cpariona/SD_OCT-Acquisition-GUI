@@ -48,9 +48,12 @@ change the camera rate to hit a nominal alignment frequency.
 `camera.camera_rearm_us` is intentionally absent until measured. Add that key to
 `system.toml` after determining the required gap between the end of a frame and
 the next trigger. Zero is valid only if physically demonstrated. Planning works
-without it; physical acquisition requires it. Sync may already supply the needed
-inter-frame interval; the planner adds only the remaining hold. A positive camera
-phase remains within one active A-line tick so no transition is captured.
+without it; physical acquisition requires it. The session-continuity diagnostic
+accepts an explicit `--camera-rearm-us` candidate and applies it only to the
+in-memory diagnostic profile; it never edits `system.toml`. Sync may already
+supply the needed inter-frame interval; the planner adds only the remaining hold.
+A positive camera phase remains within one active A-line tick so no transition is
+captured.
 
 Continuous stationary alignment retains the configured camera rate and derives
 its trigger cadence from the schedule. Continuous crosshair uses one regenerated
@@ -118,9 +121,11 @@ Two scripts require an explicit `--execute`:
   test interval with `--period-ms`; inspect HIGH/LOW and edge count on a scope.
 - `tools/diagnostics/session_continuity.py`: do two finite acquisitions deliver
   consecutive buffers while retaining the same camera session, including idle
-  time between runs? Default stationary geometry stays at the configured park;
-  `--pattern crosshair` exercises X/Y ordering. OCE requires `--oce`. The script
-  reports expected PFI12/PFI13 counts for comparison with the scope.
+  time between runs? Supply the candidate rearm gap explicitly with
+  `--camera-rearm-us <value>`; the candidate is not persisted. Default stationary
+  geometry stays at the configured park; `--pattern crosshair` exercises X/Y
+  ordering. OCE requires `--oce`. The script reports expected PFI12/PFI13 counts
+  for comparison with the scope.
 
 Outstanding physical checks:
 
