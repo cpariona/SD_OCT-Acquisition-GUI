@@ -1,6 +1,5 @@
 """Camera/DAQ session coordination for this laboratory instrument."""
 import time
-from math import ceil
 from ..config import HardwareProfile, RuntimePolicy
 from ..scan import Schedule
 from .camera import Camera
@@ -34,7 +33,6 @@ class HardwareSystem:
     def execute(self, schedule: Schedule, stop_event):
         self.preflight(schedule)
         self.connect(schedule.request.frame_lines)
-        self.camera.set_read_timeout(self.policy.frame_timeout_ms + ceil(schedule.period_s * 1000))
         self.active = True
         self.statistics = dict(block_count=0, block_setup_max_s=0.0, block_setup_total_s=0.0,
                                first_buffer=None, last_buffer=None,

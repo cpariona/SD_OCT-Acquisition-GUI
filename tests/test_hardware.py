@@ -176,6 +176,7 @@ class HardwareTests(unittest.TestCase):
         self.assertEqual([item[1] for item in first + second], list(range(self.p.frame_count * 2)))
         self.assertFalse(camera.close.called)
         self.assertEqual(daq.prepare.call_count, 2)
+        camera.set_read_timeout.assert_not_called()
         camera.read.side_effect = RuntimeError("discontinuity")
         with self.assertRaisesRegex(RuntimeError, "discontinuity"):
             list(system.execute(s, Event()))

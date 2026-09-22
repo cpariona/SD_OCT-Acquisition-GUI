@@ -71,10 +71,11 @@ or failed exposure invalidates the session and requires reconnect. Disconnect
 closes the frame grabber explicitly.
 
 The external trigger wait is infinite to accommodate intentional idle periods.
-The synchronous frame-extraction wait remains finite, using the scheduled frame
-period plus the configured timeout allowance. A stop while extraction is blocked
-may therefore wait until a buffer arrives or that timeout expires. This GUI stop
-is not an independent emergency stop.
+The synchronous frame-extraction wait remains finite. Its timeout is configured
+before the ring starts, using the configured allowance plus the active frame
+capture duration; NI-IMAQ does not permit changing this attribute while the ring
+is acquiring. A stop while extraction is blocked may therefore wait until a buffer
+arrives or that timeout expires. This GUI stop is not an independent emergency stop.
 
 Each buffer is requested by cumulative number, checked for exact equality,
 copied using the reported row stride, and released even on a validation error.
